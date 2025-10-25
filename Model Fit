@@ -1,0 +1,42 @@
+from sklearn.model_selection import StratifiedKFold
+from sklearn.utils.class_weight import compute_class_weight
+import numpy as np
+import tensorflow as tf
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+y = y_labels.astype(int)
+
+for fold, (tr, va) in enumerate(skf.split(np.zeros(len(y)), y), 1):
+    Xs_tr = [X_smri[tr], X_eeg[tr]]
+    Xs_va = [X_smri[va], X_eeg[va]]
+    y_tr, y_va = y[tr], y[va]
+
+    # optional class weights for imbalance
+    classes = np.unique(y_tr)
+    cw = compute_class_weight('balanced', classes=classes, y=y_tr)
+    class_weight = {int(c): float(w) for c, w in zip(classes, cw)}
+
+    # fresh model per fold
+    model = build_model()  # your factory that returns a compiled model
+
+    cbs = [
+        tf.keras.callbacks.EarlyStopping(
+            monitor='val_auc', mode='max', patience=10,
+            restore_best_weights=True, verbose=1),  # [web:83][web:80]
+        tf.keras.callbacks.ModelCheckpoint(
+            f'best_fold{fold}.keras', monitor='val_auc',
+            mode='max', save_best_only=True, save_weights_only=False, verbose=1),  # [web:83]
+        tf.keras.callbacks.ReduceLROnPlateau(
+            monitor='val_auc', mode='max', factor=0.5, patience=5, min_lr=1e-6, verbose=1),
+    ]
+
+    history = model.fit(
+        Xs_tr, y_tr,
+        validation_data=(Xs_va, y_va),
+        epochs=100,
+        batch_size=8,
+        callbacks=cbs,
+        class_weight=class_weight,
+        verbose=2,
+    )
