@@ -1,0 +1,65 @@
+import tensorflow as tf
+from tensorflow.keras import layers as L, Model, regularizers
+
+tf.keras.mixed_precision.set_global_policy('mixed_float16')  # optional
+
+def create_smri_branch(input_shape=(96, 96, 96, 1)):
+    inp = L.Input(shape=input_shape, name='smri_input')
+    x = L.Conv3D(16, 3, padding='same', kernel_initializer='he_normal',
+                 kernel_regularizer=regularizers.l2(1e-4))(inp)
+    x = L.BatchNormalization()(x); x = L.ReLU()(x)
+    x = L.MaxPooling3D(2)(x)
+
+    x = L.Conv3D(32, 3, padding='same', kernel_initializer='he_normal',
+                 kernel_regularizer=regularizers.l2(1e-4))(x)
+    x = L.BatchNormalization()(x); x = L.ReLU()(x)
+    x = L.MaxPooling3D(2)(x)
+
+    x = L.Conv3D(64, 3, padding='same', kernel_initializer='he_normal',
+                 kernel_regularizer=regularizers.l2(1e-4))(x)
+    x = L.BatchNormalization()(x); x = L.ReLU()(x)
+    x = L.MaxPooling3D(2)(x)
+
+    x = L.GlobalAveragePooling3D()(x)
+    feat = L.Dense(128, activation='relu', name='smri_features')(x)
+    return inp, feat
+
+def create_eeg_branch(input_shape=(64, 250, 1)):
+    inp = L.Input(shape=input_shape, name='eeg_input')
+    y = L.Conv2D(32, 3, padding='same', kernel_initializer='he_normal',
+                 kernel_regularizer=regularizers.l2(1e-4))(inp)
+    y = L.BatchNormalization()(y); y = L.ReLU()(y)
+    y = L.MaxPooling2D(2)(y)
+
+    y = L.Conv2D(64, 3, padding='same', kernel_initializer='he_normal',
+                 kernel_regularizer=regularizers.l2(1e-4))(y)
+    y = L.BatchNormalization()(y); y = L.ReLU()(y)
+    y = L.MaxPooling2D(2)(y)
+
+    y = L.Conv2D(128, 3, padding='same', kernel_initializer='he_normal',
+                 kernel_regularizer=regularizers.l2(1e-4))(y)
+    y = L.BatchNormalization()(y); y = L.ReLU()(y)
+    y = L.MaxPooling2D(2)(y)
+
+    y = L.GlobalAveragePooling2D()(y)
+    feat = L.Dense(128, activation='relu', name='eeg_features')(y)
+    return inp, feat
+
+smri_in, smri_feat = create_smri_branch((96, 96, 96, 1))
+eeg_in, eeg_feat = create_eeg_branch((64, 250, 1))
+
+z = L.concatenate([smri_feat, eeg_feat])
+z = L.Dense(128, activation='relu')(z)
+z = L.Dropout(0.5)(z)
+z = L.Dense(64, activation='relu')(z)
+z = L.Dropout(0.5)(z)
+out = L.Dense(1, activation='sigmoid', dtype='float32', name='final_output')(z)  # float32 for numerics
+
+model = Model(inputs=[smri_in, eeg_in], outputs=out, name='MultiModal_ASD_CNN')
+
+opt = tf.keras.optimizers.Adam(learning_rate=3e-4, clipnorm=1.0)
+model.compile(optimizer=opt,
+              loss='binary_crossentropy',
+              metrics=['accuracy', tf.keras.metrics.AUC(name='auc')])
+
+model.summary()
